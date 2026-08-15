@@ -6,6 +6,12 @@ export class StorageService {
     constructor(prefix = 'logistics_') {
         this.prefix = prefix;
         this.schedulePrefix = 'schedule_';
+        this._isRealtimeUpdate = false; // 실시간 업데이트 플래그
+    }
+
+    // 실시간 업데이트 플래그 설정
+    setRealtimeUpdate(value) {
+        this._isRealtimeUpdate = value;
     }
 
     // JSON 데이터 저장/로드 헬퍼 메서드
@@ -26,7 +32,7 @@ export class StorageService {
     // Supabase 동기화 헬퍼 메서드 (중복 로직 제거)
     async _syncToSupabase(syncMethod, ...args) {
         // 실시간 업데이트로 인한 저장이면 Supabase에 저장하지 않음 (무한 루프 방지)
-        if (window.App && window.App._isRealtimeUpdate) {
+        if (this._isRealtimeUpdate) {
             console.log('실시간 업데이트로 인한 저장 - Supabase 저장 스킵');
             return;
         }

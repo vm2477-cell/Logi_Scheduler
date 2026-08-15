@@ -1320,6 +1320,9 @@ export const App = {
             const supabaseStorage = this.services.supabaseStorage;
             console.log('📥 Supabase에서 데이터 로드 시작...');
 
+            // 로드 중에는 Supabase 동기화 비활성화 (타임아웃 방지)
+            this.services.storage.setRealtimeUpdate(true);
+
             // 대리점 데이터 로드
             const agencies = await supabaseStorage.loadAgencies();
             if (agencies && agencies.length > 0) {
@@ -1482,6 +1485,8 @@ export const App = {
             showNotification('클라우드 데이터 로드에 실패했습니다.', 'error');
         } finally {
             this.hideLoadingOverlay();
+            // Supabase 동기화 플래그 해제
+            this.services.storage.setRealtimeUpdate(false);
         }
     },
 
