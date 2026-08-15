@@ -330,6 +330,9 @@ export const App = {
                 this.startGpsWatching();
             }
             
+            // 네트워크 상태 모니터링 시작
+            this.initNetworkMonitoring();
+            
             console.log('✅ 앱 초기화 완료');
             
         } catch (error) {
@@ -1526,6 +1529,193 @@ export const App = {
             </button>
             ${filteredAgencies.length > 0 ? agenciesList : '<div class="px-3 py-2 text-sm text-gray-500">결과 없음</div>'}
         `;
+    },
+
+    // 네트워크 상태 모니터링 초기화
+    initNetworkMonitoring() {
+        if (!this.state.isSupabaseEnabled) {
+            console.log('클라우드 동기화가 비활성화되어 있어 네트워크 모니터링을 건너뜁니다.');
+            return;
+        }
+
+        // 초기 네트워크 상태 저장
+        this.state.isOnline = navigator.onLine;
+        console.log('📡 초기 네트워크 상태:', this.state.isOnline ? '온라인' : '오프라인');
+
+        // 온라인 이벤트 리스너
+        window.addEventListener('online', () => {
+            console.log('📡 네트워크 연결 복구됨');
+            this.state.isOnline = true;
+            this.handleNetworkRecovery();
+        });
+
+        // 오프라인 이벤트 리스너
+        window.addEventListener('offline', () => {
+            console.log('📡 네트워크 연결 끊김');
+            this.state.isOnline = false;
+            this.handleNetworkDisconnection();
+        });
+    },
+
+    // 네트워크 복구 처리
+    async handleNetworkRecovery() {
+        if (!this.state.isSupabaseEnabled) return;
+
+        showNotification('네트워크 연결이 복구되었습니다. 동기화를 시작합니다...', 'info', 3000);
+
+        try {
+            await this.syncOfflineData();
+            showNotification('오프라인 데이터 동기화 완료!', 'success', 3000);
+        } catch (error) {
+            console.error('오프라인 동기화 실패:', error);
+            showNotification('동기화 중 오류가 발생했습니다.', 'error', 5000);
+        }
+    },
+
+    // 네트워크 연결 끊김 처리
+    handleNetworkDisconnection() {
+        showNotification('네트워크 연결이 끊겼습니다. 오프라인 모드로 작동합니다.', 'warning', 3000);
+        // 오프라인 상태임을 표시하거나 UI 업데이트
+    },
+
+    // 오프라인 데이터 동기화
+    async syncOfflineData() {
+        if (!this.state.isSupabaseEnabled || !this.state.currentUser) {
+            console.log('클라우드 동기화가 비활성화되어 있거나 로그인되지 않았습니다.');
+            return;
+        }
+
+        console.log('🔄 오프라인 데이터 동기화 시작...');
+
+        try {
+            // 최근 30일 동안의 스케줄 데이터 확인 및 동기화
+            const today = new Date();
+            const syncDates = [];
+
+            for (let i = 0; i < 30; i++) {
+                const date = new Date(today);
+                date.setDate(today.getDate() - i);
+                const dateStr = date.toISOString().split('T')[0];
+                syncDates.push(dateStr);
+            }
+
+            const supabaseStorage = this.services.supabaseStorage;
+            let syncCount = 0;
+
+            for (const dateStr of syncDates) {
+                const localData = this.services.storage.loadScheduleForDate(dateStr);
+                
+                if (localData && (localData.stops || localData.length > 0)) {
+                    const remoteData = await supabaseStorage.loadScheduleForDate(dateStr);
+                    
+                    const localLastModified = localData.lastModified ? new Date(localData.lastModified).getTime() : 0;
+                    const remoteLastModified = remoteData && remoteData.lastModified ? new Date(remoteData.lastModified).getTime() : 0;
+
+                    // 로컬 데이터가 더 최신이거나 원격 데이터가 없으면 서버에 업로드
+                    if (!remoteData || localLastModified > remoteLastModified) {
+                        await supabaseStorage.saveSchedule(dateStr, localData);
+                        console.log(`📤 스케줄 동기화 (로컬→서버): ${dateStr}`);
+                        syncCount++;
+                    }
+                    // 원격 데이터가 더 최신이면 로컬에 다운로드
+                    else if (remoteLastModified > localLastModified) {
+                        this.services.storage.saveSchedule(dateStr, remoteData);
+                        console.log(`📥 스케줄 동기화 (서버→로컬): ${dateStr}`);
+                        syncCount++;
+                    }
+                }
+            }
+
+            // 기본 데이터(대리점, 코스 등) 동기화
+            await this.syncBasicData(supabaseStorage);
+
+            console.log(`✅ 오프라인 데이터 동기화 완료: ${syncCount}개 스케줄 동기화됨`);
+
+            // 캐시 재구축
+            this.buildCache();
+
+            // 현재 날짜 스케줄 다시 로드
+            if (this.state.selectedDate) {
+                this.loadScheduleForDate(this.state.selectedDate);
+            }
+
+            // 히스토리 다시 로드
+            this.loadHistory();
+
+        } catch (error) {
+            console.error('오프라인 동기화 실패:', error);
+            throw error;
+        }
+    },
+
+    // 기본 데이터 동기화
+    async syncBasicData(supabaseStorage) {
+        try {
+            // 대리점 데이터 동기화
+            const localAgencies = this.state.agencies;
+            const remoteAgencies = await supabaseStorage.loadAgencies();
+            
+            if (remoteAgencies && remoteAgencies.length > 0) {
+                // 로컬과 원격 데이터 병합 (타임스탬프 기반)
+                this.state.agencies = this.mergeDataByTimestamp(localAgencies, remoteAgencies);
+                this.services.storage.saveAgencies(this.state.agencies);
+                await supabaseStorage.saveAgencies(this.state.agencies);
+                console.log('📤 대리점 데이터 동기화 완료');
+            }
+
+            // 코스 데이터 동기화
+            const localCourses = this.state.courses;
+            const remoteCourses = await supabaseStorage.loadCourses();
+            
+            if (remoteCourses && remoteCourses.length > 0) {
+                this.state.courses = this.mergeDataByTimestamp(localCourses, remoteCourses);
+                this.services.storage.saveCourses(this.state.courses);
+                await supabaseStorage.saveCourses(this.state.courses);
+                console.log('📤 코스 데이터 동기화 완료');
+            }
+
+            // 기사 데이터 동기화
+            const localDrivers = this.state.drivers;
+            const remoteDrivers = await supabaseStorage.loadDrivers();
+            
+            if (remoteDrivers && remoteDrivers.length > 0) {
+                this.state.drivers = this.mergeDataByTimestamp(localDrivers, remoteDrivers);
+                this.services.storage.saveDrivers(this.state.drivers);
+                await supabaseStorage.saveDrivers(this.state.drivers);
+                console.log('📤 기사 데이터 동기화 완료');
+            }
+
+        } catch (error) {
+            console.error('기본 데이터 동기화 실패:', error);
+        }
+    },
+
+    // 타임스탬프 기반 데이터 병합
+    mergeDataByTimestamp(localData, remoteData) {
+        const merged = [...localData];
+        const localIds = new Set(localData.map(item => item.id));
+
+        for (const remoteItem of remoteData) {
+            const localItem = localData.find(item => item.id === remoteItem.id);
+            
+            if (!localItem) {
+                // 로컬에 없는 항목 추가
+                merged.push(remoteItem);
+            } else {
+                // 타임스탬프 비교하여 최신 데이터 유지
+                const localTime = localItem.lastModified ? new Date(localItem.lastModified).getTime() : 0;
+                const remoteTime = remoteItem.lastModified ? new Date(remoteItem.lastModified).getTime() : 0;
+                
+                if (remoteTime > localTime) {
+                    const index = merged.findIndex(item => item.id === remoteItem.id);
+                    if (index !== -1) {
+                        merged[index] = remoteItem;
+                    }
+                }
+            }
+        }
+
+        return merged;
     }
 };
 

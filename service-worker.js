@@ -26,10 +26,8 @@ const FILES_TO_CACHE = [
     './js/components/schedule-table.js',
     './js/components/system-tab.js',
     './js/handlers/action-handlers.js',
-    './js/handlers/drag-drop.js',
     './js/handlers/event-handlers.js',
     './js/handlers/index.js',
-    './js/handlers/resize-handlers.js',
     './js/handlers/ui-handlers.js',
     './js/services/db-service.js',
     './js/services/geolocation-service.js',
@@ -45,20 +43,11 @@ const FILES_TO_CACHE = [
     './js/views/vehicle-log-view.js',
     './Camera202.html',
 
-    // --- 파일 분석 기능 오프라인 지원을 위한 라이브러리 추가 ---
-    // 아래 경로는 예시이며, 실제 프로젝트의 파일 경로에 맞게 수정해야 합니다.
-    // './js/lib/pdf.min.js', // PDF.js 라이브러리 (파일이 없어 오류가 발생하므로 임시 비활성화)
-    // './js/lib/pdf.worker.min.js', // PDF.js 워커 (파일이 없어 오류가 발생하므로 임시 비활성화)
-
     // --- 외부 CDN 라이브러리 캐싱 (오프라인 지원) ---
-    // 중요: 여기에 명시된 URL은 리디렉션 없이 실제 파일을 직접 가리켜야 합니다.
-    // 그렇지 않으면 서비스 워커 설치가 실패하여 앱 전체가 오프라인에서 동작하지 않습니다.
-    // 'https://cdn.tailwindcss.com/3.4.1', // 설치 시 문제를 일으킬 수 있어 제거. fetch 이벤트에서 동적으로 캐싱됩니다.
     'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js',
 
     './images/100.png',
-    './images/icon-192x192.png',
-    // './images/icon-512x512.png'
+    './images/icon-192x192.png'
 ];
 
 // 서비스 워커 설치 이벤트

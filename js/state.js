@@ -16,6 +16,9 @@ export const AppState = {
     activeTab: 'agencies',
     selectedDate: '',
     
+    // 네트워크 상태
+    isOnline: navigator.onLine,
+    
     // 스케줄 데이터
     editableStops: [],
     lastSaved: null,
