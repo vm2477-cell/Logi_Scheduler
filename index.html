@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>배송 스케줄러</title>
+    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    
+    <!-- 기본 스타일 -->
+    <style>
+        :root { color-scheme: light; }
+        html.dark { color-scheme: dark; }
+        .drag-handle { cursor: grab; background-color: transparent; border: none; padding: 0; }
+        .drag-handle:active { cursor: grabbing; }
+        .modal-overlay { 
+            background-color: rgba(0, 0, 0, 0.5);
+            /* 모바일 터치 최적화 */
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+        }
+        
+        /* 모바일 모달 내부 입력 필드 최적화 */
+        .modal-overlay input {
+            /* iOS 자동 줌 방지 */
+            font-size: 16px !important;
+            /* 터치 지연 제거 */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* 모바일 모달 내부 버튼 최적화 */
+        .modal-overlay button {
+            /* 터치 지연 제거 */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .loading-overlay { background-color: rgba(255, 255, 255, 0.8); }
+        .notification { transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out; }
+        .notification.hide { transform: translateY(100%); opacity: 0; }
+        .select-none { user-select: none; }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
+        }
+        .resize-handle {
+            position: absolute;
+            top: 0;
+            right: -4px;
+            width: 8px;
+            height: 100%;
+            cursor: col-resize;
+            z-index: 10;
+        }
+    </style>
+
+    <!-- PWA 매니페스트 -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="스케줄러">
+    <link rel="apple-touch-icon" href="images/icon-192x192.png">
+    
+    <!-- 외부 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="js/supabase.js" type="module"></script>
+</head>
+
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 p-2 sm:p-4 transition-colors duration-300">
+    <!-- 모바일 디버그 인디케이터 -->
+    <div id="mobile-debug-indicator" style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 5px; z-index: 9999; font-size: 12px;"></div>
+
+    <!-- 메인 앱 컨테이너 -->
+    <div id="app" class="max-w-7xl mx-auto bg-white dark:bg-gray-800 shadow-lg rounded-lg py-4 px-1 sm:p-6">
+        <header class="flex flex-col sm:flex-row justify-between sm:items-center border-b border-gray-200 dark:border-gray-700 pb-4 mb-4 gap-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:space-x-4 gap-2 sm:gap-0 w-full sm:w-auto">
+                <h1 class="text-xl sm:text-2xl font-bold text-gray-800 dark:text-white">배송 스케줄러</h1>
+                <div id="course-display" class="flex items-center space-x-2 p-2 rounded bg-gray-100 dark:bg-gray-700">
+                    <span class="text-sm font-medium text-gray-600 dark:text-gray-300">현재 스케줄:</span>
+                </div>
+                <!-- 로그인 상태 표시 영역 -->
+                <div id="login-status-display" class="flex items-center space-x-2 p-2 rounded bg-gray-100 dark:bg-gray-700">
+                    <!-- 로그인 상태 텍스트가 여기에 삽입됩니다. -->
+                    <span id="course-name-display" class="text-sm font-bold text-gray-900 dark:text-gray-100"></span>
+                </div>
+                <div id="last-saved-info" class="text-sm text-gray-500 dark:text-gray-400"></div>
+            </div>
+            <div class="flex items-center space-x-2 flex-wrap gap-2">
+                <label for="selected-date" class="sr-only">날짜 선택</label>
+                <input type="date" id="selected-date" class="border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 p-2 rounded text-sm w-full sm:w-36">
+                <div class="flex items-center space-x-2">
+                    <button data-action="toggle-fullscreen" id="fullscreen-toggle" class="bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-500">전체화면</button>
+                </div>
+                <nav class="relative inline-block text-left w-full sm:w-auto" role="navigation" aria-label="Main navigation">
+                    <div class="flex justify-around sm:justify-start">
+                        <button data-action="switch-view" data-view="schedule" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="schedule-view-btn">스케줄</button>
+                        <button data-action="switch-view" data-view="analysis" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="analysis-view-btn">파일 분석</button>
+                        <button data-action="switch-view" data-view="settings" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="settings-view-btn">설정</button>
+                        <button data-action="switch-view" data-view="history" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="history-view-btn">히스토리</button>
+                        <button data-action="switch-view" data-view="manual" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="manual-view-btn">메뉴얼</button>
+                        <button data-action="switch-view" data-view="vehicleLog" class="px-3 py-2 rounded text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2" id="vehicleLog-view-btn">차계부</button>
+                    </div>
+                </nav>
+            </div>
+        </header>
+
+        <main id="content-container">
+            <!-- 동적 콘텐츠가 여기에 렌더링됩니다 -->
+        </main>
+    </div>
+
+    <!-- 모달 컨테이너 -->
+    <div id="modals-container"></div>
+    
+    <!-- 파일 입력 (숨김) -->
+    <input type="file" id="restore-file-input" class="hidden" accept=".json">
+    
+    <!-- 알림 컨테이너 -->
+    <div id="notification-container" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-md"></div>
+
+    <!-- 맨 위로 가기 버튼 -->
+    <button id="scroll-to-top-btn" class="hidden fixed bottom-5 right-5 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full shadow-lg transition-opacity duration-300 z-50">
+        ↑
+    </button>
+
+    <!-- JavaScript 모듈 임포트 -->
+    <script type="module">
+        import { App } from './js/app.js';
+        
+        document.addEventListener('DOMContentLoaded', async () => {
+            await App.init();
+            App.render();
+        });
+    </script>
+</body>
+</html>
