@@ -1,0 +1,2 @@
+This is a placeholder file to ensure the images directory is created.
+You should place your app icons (e.g., icon-192x192.png, icon-512x512.png) in this directory.

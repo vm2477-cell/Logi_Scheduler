@@ -1,0 +1,181 @@
+/* Tailwind CSS - Production Build */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 글로벌 모바일 최적화 */
+@layer base {
+  /* 모바일 우선 설계: 기본값은 모바일, md 이상에서 확대 */
+  body {
+    @apply text-sm sm:text-base;
+  }
+  
+  /* 입력 필드 모바일 최적화 */
+  input, select, textarea {
+    @apply text-base sm:text-base; /* 모바일 자동 줌 방지 */
+    @apply min-h-[44px] sm:min-h-[40px]; /* 터치 표준 */
+  }
+  
+  /* 버튼 모바일 최적화 */
+  button {
+    @apply min-h-[44px] sm:min-h-[40px]; /* 터치 표준 */
+  }
+  
+  /* 제목 반응형 크기 */
+  h1 {
+    @apply text-2xl sm:text-3xl md:text-4xl;
+  }
+  
+  h2 {
+    @apply text-xl sm:text-2xl md:text-3xl;
+  }
+  
+  h3 {
+    @apply text-lg sm:text-xl md:text-2xl;
+  }
+  
+  h4 {
+    @apply text-base sm:text-lg md:text-xl;
+  }
+  
+  h5, h6 {
+    @apply text-sm sm:text-base md:text-lg;
+  }
+}
+
+@layer components {
+  /* 모바일 최적화된 컨테이너 */
+  .mobile-container {
+    @apply p-3 sm:p-4 md:p-6;
+  }
+  
+  /* 모바일 최적화된 그리드 */
+  .mobile-grid-2 {
+    @apply grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 md:gap-4;
+  }
+  
+  .mobile-grid-3 {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 md:gap-4;
+  }
+  
+  .mobile-grid-4 {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 md:gap-4;
+  }
+  
+  /* 모바일 최적화된 폼 */
+  .mobile-form {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3;
+  }
+  
+  /* 모바일 최적화된 버튼 그룹 */
+  .mobile-button-group {
+    @apply flex flex-col sm:flex-row gap-2 w-full;
+  }
+  
+  .mobile-button-group > button {
+    @apply w-full sm:w-auto;
+  }
+  
+  /* 테이블 모바일 반응형 */
+  .mobile-table {
+    @apply text-xs sm:text-sm;
+  }
+  
+  .mobile-table th,
+  .mobile-table td {
+    @apply py-2 px-2 sm:px-4;
+  }
+  
+  /* 모바일 최적화된 입력 */
+  .mobile-input {
+    @apply w-full p-2 sm:p-3 text-sm sm:text-base border rounded-md;
+  }
+  
+  /* 모바일 최적화된 레이블 */
+  .mobile-label {
+    @apply block text-xs sm:text-sm font-medium;
+  }
+}
+
+/* Custom CSS Variables */
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* Custom Components */
+.drag-handle {
+  cursor: grab;
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.modal-overlay {
+  background-color: rgba(0, 0, 0, 0.5);
+  /* 모바일 터치 최적화 */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* 모바일 모달 내부 입력 필드 최적화 */
+.modal-overlay input {
+  /* iOS 자동 줌 방지 */
+  font-size: 16px !important;
+  /* 터치 지연 제거 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 모바일 모달 내부 버튼 최적화 */
+.modal-overlay button {
+  /* 터치 지연 제거 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.loading-overlay {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.notification {
+  transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+}
+
+.notification.hide {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+.select-none {
+  user-select: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
