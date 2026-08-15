@@ -8,7 +8,7 @@ export const VERSION_CONFIG = {
         buildNumber: new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-01'
     },
     UPDATE: {
-        updateUrl: '/release-notes.json',
+        updateUrl: './release-notes.json',
         autoCheckEnabled: true,
         checkInterval: 60
     }
