@@ -2863,6 +2863,25 @@ export const ActionHandlers = {
             });
         }
         cleaned.coursePriorities = cleanPriorities;
+
+        // courseIds 정리: checkbox로 전달되는 경우 문자열 또는 배열일 수 있으므로
+        // 숫자 배열로 정리하여 중복/NaN 제거
+        if (Array.isArray(data.courseIds)) {
+            cleaned.courseIds = data.courseIds
+                .map(id => parseInt(id, 10))
+                .filter(id => !isNaN(id));
+        } else if (data.courseIds !== undefined && data.courseIds !== null) {
+            // 단일 값으로 전달된 경우(예: string)도 배열로 변환
+            const singleId = parseInt(data.courseIds, 10);
+            cleaned.courseIds = !isNaN(singleId) ? [singleId] : [];
+        } else {
+            // 기존 값이 있다면 유지(데이터가 객체에서 전달되는 경우)
+            cleaned.courseIds = Array.isArray(data.courseIds) ? data.courseIds : (data.courseIds ? [data.courseIds] : []);
+            // 최종 안전성: 빈 배열 보장
+            if (!Array.isArray(cleaned.courseIds)) cleaned.courseIds = [];
+            cleaned.courseIds = cleaned.courseIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+        }
+
         return cleaned;
     },
 
