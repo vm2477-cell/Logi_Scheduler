@@ -189,9 +189,15 @@ export const App = {
         try {
             console.log('🚀 배송 스케줄러 앱 초기화 중...');
 
+            const savedDeviceId = localStorage.getItem('logistics_device_id') ||
+                (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `device-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+            localStorage.setItem('logistics_device_id', savedDeviceId);
+            this.state.deviceId = savedDeviceId;
+            globalThis.__logisticsDeviceId = savedDeviceId;
+
             // 서비스 워커 업데이트 로직 초기화
             initServiceWorker();
-            
+             
             // 모바일 환경 감지
             this.state.isMobile = this.detectMobile();
             
@@ -241,6 +247,8 @@ export const App = {
                                 const latestRevision = revisions[0]; // 이미 내림차순 정렬됨
                                 await supabaseStorage.setActiveRevision(latestRevision.id);
                                 console.log('✅ 기존 개정을 활성화했습니다:', latestRevision.name);
+                                // 활성화 후 데이터 로드
+                                await this.loadFromSupabase();
                             } else {
                                 // 기존 개정이 없으면 새 개정 생성
                                 const firstRevision = await supabaseStorage.createRevision(
@@ -329,7 +337,14 @@ export const App = {
             if (this.state.isSupabaseEnabled) {
                 this.startPeriodicSync();
             }
-            
+
+            window.addEventListener('beforeunload', () => {
+                this.cleanupSyncResources();
+            });
+            window.addEventListener('pagehide', () => {
+                this.cleanupSyncResources();
+            });
+              
             console.log('✅ 앱 초기화 완료');
             
         } catch (error) {
@@ -902,8 +917,8 @@ export const App = {
     },
 
     // 스케줄 저장
-    saveSchedule(isAutoSave = false) {
-        if (this.state.viewMode === 'history') return;
+    async saveSchedule(isAutoSave = false) {
+        if (this.state.viewMode === 'history' || this.state.syncInProgress) return;
 
         const data = {
             stops: this.state.editableStops.map(s => ({
@@ -919,10 +934,18 @@ export const App = {
             selectedCourseOrder: this.state.selectedCourseOrder,
             lastModified: new Date().toISOString(), // 마지막 수정 시간 추가
             isCompleted: this.state.isCompleted,
+            deviceId: this.state.deviceId || globalThis.__logisticsDeviceId,
+            updatedAt: new Date().toISOString(),
             // _lastSavedEditableStopsSnapshot는 저장 시점에 업데이트되므로 여기에 포함하지 않습니다.
         };
 
-        this.services.storage.saveSchedule(this.state.selectedDate, data);
+        const writeTimestamp = new Date().toISOString();
+        this.state.lastAppliedRemoteUpdateAt = writeTimestamp;
+
+        await this.services.storage.saveSchedule(this.state.selectedDate, data)
+            .catch(err => {
+                console.error('로컬/클라우드 스케줄 저장 실패:', err);
+            });
         
         const saveType = isAutoSave ? '자동' : '수동';
         this.state.lastSaved = `${saveType} 저장: ${new Date().toLocaleTimeString('ko-KR')}`;
@@ -941,12 +964,6 @@ export const App = {
         // 만약 현재 뷰가 히스토리 뷰라면 렌더링을 다시 합니다.
         if (this.state.viewMode === 'history') {
             this.render();
-        }
-        // 클라우드 동기화가 활성화된 경우 Supabase에도 저장
-        if (this.state.isSupabaseEnabled && this.services.supabaseStorage && !this._isRealtimeUpdate) {
-            this.services.supabaseStorage.saveSchedule(this.state.selectedDate, data)
-                .then(() => console.log('☁️ 스케줄이 클라우드에 동기화되었습니다.'))
-                .catch(err => console.error('클라우드 스케줄 동기화 실패:', err));
         }
     },
 
@@ -1147,6 +1164,45 @@ export const App = {
     },
 
     // 실시간 동기화 설정
+    setSyncGuard(value) {
+        this.state.syncInProgress = value;
+        globalThis.__appCloudSyncGuard = value;
+        if (this.services && this.services.storage) {
+            this.services.storage.setRealtimeUpdate(value);
+        }
+    },
+
+    getClientSyncMetadata() {
+        return {
+            deviceId: this.state.deviceId || globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id'),
+            updatedAt: new Date().toISOString()
+        };
+    },
+
+    shouldSkipRemoteSync(payload) {
+        if (!payload || !payload.new) return true;
+
+        const remoteDeviceId = payload.new.device_id || payload.new.data?.device_id || payload.new.deviceId || payload.new.data?.deviceId || payload.new.updated_by || null;
+        if (this.state.deviceId && remoteDeviceId && remoteDeviceId === this.state.deviceId) {
+            return true;
+        }
+
+        const remoteUpdatedAt = payload.new.updated_at || payload.new.data?.updated_at || payload.new.lastModified || payload.new.updatedAt || payload.new.data?.updatedAt || null;
+        if (remoteUpdatedAt && this.state.lastAppliedRemoteUpdateAt && new Date(remoteUpdatedAt).getTime() <= new Date(this.state.lastAppliedRemoteUpdateAt).getTime()) {
+            return true;
+        }
+
+        return false;
+    },
+
+    getRemoteUpdateMetadata(payload) {
+        const newRow = payload?.new || {};
+        return {
+            deviceId: newRow.device_id || newRow.data?.device_id || newRow.deviceId || newRow.data?.deviceId || newRow.updated_by || null,
+            updatedAt: newRow.updated_at || newRow.data?.updated_at || newRow.lastModified || newRow.updatedAt || newRow.data?.updatedAt || null
+        };
+    },
+
     async setupRealtimeSync() {
         if (!isSupabaseConfigured()) return;
 
@@ -1180,8 +1236,17 @@ export const App = {
     async handleRealtimeUpdate(tableName, payload) {
         console.log(`실시간 업데이트 감지: ${tableName}`, payload);
 
-        // 실시간 업데이트가 감지되면 자동으로 데이터 로드
-        this._isRealtimeUpdate = true; // 무한 루프 방지 플래그
+        const remoteMeta = this.getRemoteUpdateMetadata(payload);
+        if (this.shouldSkipRemoteSync(payload)) {
+            console.log('실시간 이벤트 무시:', tableName, {
+                remoteDeviceId: remoteMeta.deviceId,
+                remoteUpdatedAt: remoteMeta.updatedAt
+            });
+            return;
+        }
+
+        this.setSyncGuard(true);
+        this._isRealtimeUpdate = true;
 
         try {
             const supabaseStorage = this.services.supabaseStorage;
@@ -1193,25 +1258,19 @@ export const App = {
                         const newScheduleData = await supabaseStorage.loadScheduleForDate(date);
                         const localScheduleData = this.services.storage.loadScheduleForDate(date);
 
-                        const newLastModified = newScheduleData.lastModified ? new Date(newScheduleData.lastModified).getTime() : 0;
+                        const newLastModified = newScheduleData && newScheduleData.lastModified ? new Date(newScheduleData.lastModified).getTime() : 0;
                         const localLastModified = localScheduleData && localScheduleData.lastModified ? new Date(localScheduleData.lastModified).getTime() : 0;
 
-                        if (newLastModified > localLastModified) {
+                        if (newScheduleData && (newLastModified > localLastModified || (newLastModified === 0 && localLastModified === 0 && newScheduleData.stops && newScheduleData.stops.length > 0))) {
                             this.services.storage.saveSchedule(date, newScheduleData);
                             if (this.state.selectedDate === date) {
                                 this.loadScheduleForDate(date);
                                 this.render();
                             }
+                            this.state.lastAppliedRemoteUpdateAt = remoteMeta.updatedAt || newScheduleData.lastModified || new Date().toISOString();
                             console.log('✅ 스케줄 실시간 동기화 완료 (새로운 버전 적용):', date);
                         } else if (newLastModified < localLastModified) {
                             console.log('⚠️ 스케줄 실시간 동기화 충돌 (로컬 버전 유지):', date);
-                        } else if (newLastModified === 0 && localLastModified === 0 && newScheduleData.stops && newScheduleData.stops.length > 0) {
-                            this.services.storage.saveSchedule(date, newScheduleData);
-                            if (this.state.selectedDate === date) {
-                                this.loadScheduleForDate(date);
-                                this.render();
-                            }
-                            console.log('✅ 스케줄 실시간 동기화 완료:', date);
                         }
                     }
                     break;
@@ -1219,7 +1278,7 @@ export const App = {
                     const vehicleLog = await supabaseStorage.loadVehicleLog();
                     if (vehicleLog) {
                         this.services.storage.saveVehicleLog(vehicleLog);
-                        // Deep merge to preserve default structure
+                        this.state.lastAppliedRemoteUpdateAt = remoteMeta.updatedAt || new Date().toISOString();
                         this.state.vehicleLog = {
                             ...this.state.vehicleLog,
                             ...vehicleLog,
@@ -1243,10 +1302,10 @@ export const App = {
         } catch (error) {
             console.error('실시간 동기화 실패:', error);
         } finally {
-            // 플래그 초기화 (약간의 지연 후)
             setTimeout(() => {
                 this._isRealtimeUpdate = false;
-            }, 100);
+                this.setSyncGuard(false);
+            }, 200);
         }
     },
 
@@ -1675,12 +1734,32 @@ export const App = {
     // 기본 데이터 주기적 동기화 시작
     startPeriodicSync() {
         // 5분마다 기본 데이터 동기화
+        if (this.periodicSyncInterval) {
+            clearInterval(this.periodicSyncInterval);
+        }
+
         this.periodicSyncInterval = setInterval(async () => {
             if (this.state.isOnline && this.state.isSupabaseEnabled) {
                 console.log('🔄 기본 데이터 주기적 동기화 시작...');
                 await this.syncBasicData(this.services.supabaseStorage);
             }
         }, 5 * 60 * 1000); // 5분
+    },
+
+    cleanupSyncResources() {
+        if (this.periodicSyncInterval) {
+            clearInterval(this.periodicSyncInterval);
+            this.periodicSyncInterval = null;
+        }
+
+        if (this.realtimeSubscriptions && this.realtimeSubscriptions.length) {
+            this.cleanupRealtimeSync();
+        }
+
+        if (this.state.autoSaveTimer) {
+            clearTimeout(this.state.autoSaveTimer);
+            this.state.autoSaveTimer = null;
+        }
     },
 
     // 주기적 동기화 중지

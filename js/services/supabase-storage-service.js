@@ -125,14 +125,23 @@ export class SupabaseStorageService {
             return false;
         }
 
+        const timestamp = new Date().toISOString();
+        const syncPayload = {
+            ...(data || {}),
+            device_id: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            deviceId: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            updated_at: timestamp,
+            updatedAt: timestamp
+        };
+
         const supabase = Supabase.getSupabaseClient();
         const { error } = await supabase
             .from('schedules')
             .upsert({
                 revision_id: revisionId,
                 date,
-                data,
-                updated_at: new Date().toISOString()
+                data: syncPayload,
+                updated_at: syncPayload.updated_at
             }, {
                 onConflict: 'revision_id,date'
             });
@@ -357,12 +366,22 @@ export class SupabaseStorageService {
         const revisionId = this.currentRevisionId || await this.getActiveRevisionId();
         if (!revisionId) return false;
 
+        const timestamp = new Date().toISOString();
+        const syncPayload = {
+            ...(logData || {}),
+            device_id: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            deviceId: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            updated_at: timestamp,
+            updatedAt: timestamp
+        };
+
         const supabase = Supabase.getSupabaseClient();
         const { error } = await supabase
             .from('vehicle_logs')
             .upsert({
                 revision_id: revisionId,
-                data: logData
+                data: syncPayload,
+                updated_at: syncPayload.updated_at
             }, {
                 onConflict: 'revision_id'
             });

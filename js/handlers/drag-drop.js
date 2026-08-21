@@ -91,56 +91,88 @@ function reorderStopsFromDOM(container) {
 function initDesktopDragDrop(container) {
     let draggedElement = null;
     let placeholder = null;
+    let mouseDragState = null;
 
-    container.addEventListener('dragstart', e => {
-        const row = e.target.closest('.schedule-row');
-        if (!row || !row.draggable) {
-            e.preventDefault();
-            return;
+    function beginDesktopDrag(row) {
+        if (!row || draggedElement || !row.parentElement || row.getAttribute('draggable') === 'false') {
+            return false;
         }
 
         draggedElement = row;
         App.state.draggedStopId = parseFloat(row.dataset.stopId);
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', App.state.draggedStopId);
 
         placeholder = document.createElement('div');
         placeholder.style.height = `${draggedElement.offsetHeight}px`;
         placeholder.style.margin = getComputedStyle(draggedElement).margin;
         placeholder.className = 'placeholder-row bg-indigo-100 dark:bg-indigo-900/30 rounded-lg';
-        
+
         draggedElement.parentElement.insertBefore(placeholder, draggedElement);
-        
-        // 드래그 중인 요소가 레이아웃은 차지하되 보이지 않게 하여(invisible), 
-        // elementFromPoint가 아래에 있는 행을 감지할 수 있도록 함
-        // opacity-50 대신 invisible 사용 권장
         setTimeout(() => {
             if (draggedElement) {
                 draggedElement.classList.add('invisible');
             }
         }, 0);
-    });
 
-    container.addEventListener('dragover', e => {
-        if (!draggedElement) return;
-        e.preventDefault();
-        handleDragScroll(e.clientY);
+        return true;
+    }
 
-        const elementBelow = document.elementFromPoint(e.clientX, e.clientY);
+    function updateDesktopDragPosition(clientX, clientY) {
+        if (!draggedElement || !placeholder) return;
+
+        const elementBelow = document.elementFromPoint(clientX, clientY);
         if (!elementBelow) return;
 
-        const targetRow = elementBelow.closest('.schedule-row:not(.opacity-50)');
+        const targetRow = elementBelow.closest('.schedule-row:not(.invisible)');
         const targetContainer = elementBelow.closest('.schedule-rows');
 
         if (targetRow) {
             const rect = targetRow.getBoundingClientRect();
-            const isAfter = e.clientY > rect.top + rect.height / 2;
+            const isAfter = clientY > rect.top + rect.height / 2;
             targetRow.parentElement.insertBefore(placeholder, isAfter ? targetRow.nextSibling : targetRow);
         } else if (targetContainer && targetContainer.children.length === 0) {
-             targetContainer.appendChild(placeholder);
+            targetContainer.appendChild(placeholder);
         }
-    });
-    
+    }
+
+    function finalizeDesktopDrop() {
+        if (!draggedElement || !placeholder) return;
+
+        const draggedId = App.state.draggedStopId;
+        const draggedStop = App.state.editableStops.find(s => s.id === draggedId);
+
+        if (draggedStop && draggedStop.groupId) {
+            const groupId = draggedStop.groupId;
+            const allRows = Array.from(container.querySelectorAll('.schedule-row'));
+            const groupRows = allRows.filter(row => {
+                const sId = parseFloat(row.dataset.stopId);
+                const s = App.state.editableStops.find(stop => stop.id === sId);
+                return s && s.groupId === groupId;
+            });
+
+            groupRows.sort((a, b) => {
+                const idA = parseFloat(a.dataset.stopId);
+                const idB = parseFloat(b.dataset.stopId);
+                const idxA = App.state.editableStops.findIndex(s => s.id === idA);
+                const idxB = App.state.editableStops.findIndex(s => s.id === idB);
+                return idxA - idxB;
+            });
+
+            const parent = placeholder.parentElement;
+            if (parent) {
+                groupRows.forEach(row => {
+                    row.classList.remove('invisible');
+                    parent.insertBefore(row, placeholder);
+                });
+                placeholder.remove();
+            }
+        } else if (placeholder.parentElement) {
+            placeholder.parentElement.replaceChild(draggedElement, placeholder);
+        }
+
+        reorderStopsFromDOM(container);
+        cleanupDrag();
+    }
+
     function cleanupDrag() {
         stopScrolling();
         if (placeholder && placeholder.parentElement) {
@@ -151,54 +183,78 @@ function initDesktopDragDrop(container) {
         }
         draggedElement = null;
         placeholder = null;
+        mouseDragState = null;
         App.state.draggedStopId = null;
     }
+
+    container.addEventListener('dragstart', e => {
+        const row = e.target.closest('.schedule-row');
+        if (!row || !row.draggable) {
+            e.preventDefault();
+            return;
+        }
+
+        if (beginDesktopDrag(row)) {
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', App.state.draggedStopId);
+            }
+        }
+    });
+
+    container.addEventListener('dragover', e => {
+        if (!draggedElement) return;
+        e.preventDefault();
+        handleDragScroll(e.clientY);
+        updateDesktopDragPosition(e.clientX, e.clientY);
+    });
 
     container.addEventListener('drop', e => {
         if (!draggedElement || !placeholder) return;
         e.preventDefault();
-        
-        const draggedId = App.state.draggedStopId;
-        const draggedStop = App.state.editableStops.find(s => s.id === draggedId);
+        finalizeDesktopDrop();
+    });
 
-        if (draggedStop && draggedStop.groupId) {
-            const groupId = draggedStop.groupId;
-            // 그룹에 속한 모든 DOM 요소 찾기
-            const allRows = Array.from(container.querySelectorAll('.schedule-row'));
-            const groupRows = allRows.filter(row => {
-                const sId = parseFloat(row.dataset.stopId);
-                const s = App.state.editableStops.find(stop => stop.id === sId);
-                return s && s.groupId === groupId;
-            });
-
-            // 원래 순서대로 정렬 (상대적 순서 유지)
-            groupRows.sort((a, b) => {
-                const idA = parseFloat(a.dataset.stopId);
-                const idB = parseFloat(b.dataset.stopId);
-                const idxA = App.state.editableStops.findIndex(s => s.id === idA);
-                const idxB = App.state.editableStops.findIndex(s => s.id === idB);
-                return idxA - idxB;
-            });
-
-            // placeholder 위치로 그룹 전체 이동
-            const parent = placeholder.parentElement;
-            if (parent) {
-                groupRows.forEach(row => {
-                    row.classList.remove('invisible');
-                    parent.insertBefore(row, placeholder);
-                });
-                placeholder.remove();
-            }
-        } else {
-            placeholder.parentElement.replaceChild(draggedElement, placeholder);
-        }
-        
-        reorderStopsFromDOM(container);
+    container.addEventListener('dragend', () => {
         cleanupDrag();
     });
 
-    container.addEventListener('dragend', e => {
-        cleanupDrag();
+    container.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+
+        const row = e.target.closest('.schedule-row');
+        if (!row || row.getAttribute('draggable') === 'false') return;
+        if (e.target.closest('button, input, select, textarea, a, label')) return;
+
+        mouseDragState = {
+            row,
+            startX: e.clientX,
+            startY: e.clientY
+        };
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!mouseDragState || draggedElement) return;
+
+        const deltaX = e.clientX - mouseDragState.startX;
+        const deltaY = e.clientY - mouseDragState.startY;
+        if (Math.hypot(deltaX, deltaY) < 8) return;
+
+        if (beginDesktopDrag(mouseDragState.row)) {
+            handleDragScroll(e.clientY);
+            updateDesktopDragPosition(e.clientX, e.clientY);
+        }
+    });
+
+    window.addEventListener('mouseup', e => {
+        if (!mouseDragState || !draggedElement || !placeholder) {
+            mouseDragState = null;
+            return;
+        }
+
+        handleDragScroll(e.clientY);
+        updateDesktopDragPosition(e.clientX, e.clientY);
+        finalizeDesktopDrop();
     });
 }
 

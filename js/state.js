@@ -71,6 +71,9 @@ export const AppState = {
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
     isSupabaseEnabled: false,
+    syncInProgress: false,
+    lastAppliedRemoteUpdateAt: null,
+    deviceId: null,
     
     // 드래그 앤 드롭
     draggedStopId: null,

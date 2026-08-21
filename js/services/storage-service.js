@@ -7,6 +7,7 @@ export class StorageService {
         this.prefix = prefix;
         this.schedulePrefix = 'schedule_';
         this._isRealtimeUpdate = false; // 실시간 업데이트 플래그
+        this._lastCloudSyncKey = null;
     }
 
     // 실시간 업데이트 플래그 설정
@@ -31,11 +32,18 @@ export class StorageService {
 
     // Supabase 동기화 헬퍼 메서드 (중복 로직 제거)
     async _syncToSupabase(syncMethod, ...args) {
-        // 실시간 업데이트로 인한 저장이면 Supabase에 저장하지 않음 (무한 루프 방지)
-        if (this._isRealtimeUpdate) {
-            console.log('실시간 업데이트로 인한 저장 - Supabase 저장 스킵');
+        // 실시간 이벤트 처리 중 또는 클라우드 동기화 락이 걸려 있으면 저장하지 않음
+        if (this._isRealtimeUpdate || globalThis.__appCloudSyncGuard) {
+            console.log('동기화 락 활성화 - Supabase 저장 스킵');
             return;
         }
+
+        // 동일한 데이터가 다시 업로드되는 중복 루프 방지
+        const syncKey = `${syncMethod}:${JSON.stringify(args)}`;
+        if (this._lastCloudSyncKey === syncKey) {
+            return;
+        }
+        this._lastCloudSyncKey = syncKey;
 
         // Supabase 동기화가 활성화되어 있으면 Supabase에도 저장
         if (isSupabaseConfigured()) {
@@ -59,8 +67,16 @@ export class StorageService {
 
     // 스케줄 관련 메서드
     async saveSchedule(date, data) {
-        this._saveJSON(`${this.schedulePrefix}${date}`, data);
-        await this._syncToSupabase('saveSchedule', date, data);
+        const timestamp = new Date().toISOString();
+        const payload = {
+            ...(data || {}),
+            device_id: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            deviceId: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            updated_at: timestamp,
+            updatedAt: timestamp
+        };
+        this._saveJSON(`${this.schedulePrefix}${date}`, payload);
+        await this._syncToSupabase('saveSchedule', date, payload);
     }
 
     loadScheduleForDate(date) {
@@ -134,8 +150,16 @@ export class StorageService {
 
     // 차계부
     async saveVehicleLog(logData) {
-        this._saveJSON(`${this.prefix}vehicleLog`, logData);
-        await this._syncToSupabase('saveVehicleLog', logData);
+        const timestamp = new Date().toISOString();
+        const payload = {
+            ...(logData || {}),
+            device_id: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            deviceId: globalThis.__logisticsDeviceId || localStorage.getItem('logistics_device_id') || null,
+            updated_at: timestamp,
+            updatedAt: timestamp
+        };
+        this._saveJSON(`${this.prefix}vehicleLog`, payload);
+        await this._syncToSupabase('saveVehicleLog', payload);
     }
 
     loadVehicleLog() {
