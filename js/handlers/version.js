@@ -9,7 +9,7 @@ export const VERSION_CONFIG = {
     },
     UPDATE: {
         updateUrl: './release-notes.json',
-        autoCheckEnabled: true,
+        autoCheckEnabled: false, // Service Worker 업데이트만 사용하므로 비활성화
         checkInterval: 60
     }
 };

@@ -272,14 +272,6 @@ export const App = {
             await versionManager.init();
             // 버전 관리자에서 최신 버전을 가져와 상태에 설정
             this.state.appVersion = versionManager.currentVersion;
-            
-            // VersionManager로부터 업데이트 이벤트를 수신하여 알림을 표시합니다.
-            window.addEventListener('updateAvailable', (e) => {
-                const { message, updateInfo } = e.detail;
-                showNotification(message, 'info', 0, true, () => {
-                    versionManager.showUpdateModal(updateInfo);
-                });
-            });
 
             // 세션 상태 복원
             await this.restoreSessionState();
@@ -332,6 +324,11 @@ export const App = {
             
             // 네트워크 상태 모니터링 시작
             this.initNetworkMonitoring();
+            
+            // 기본 데이터 주기적 동기화 시작
+            if (this.state.isSupabaseEnabled) {
+                this.startPeriodicSync();
+            }
             
             console.log('✅ 앱 초기화 완료');
             
@@ -1158,37 +1155,22 @@ export const App = {
             this.supabaseStorage = new SupabaseStorageService();
             this.realtimeSubscriptions = [];
 
-            // 스케줄 테이블 구독
+            // 스케줄 테이블 구독 (실시간 동기화 필요)
             const scheduleSubscription = await this.supabaseStorage.subscribeToTable('schedules', (payload) => {
                 this.handleRealtimeUpdate('schedules', payload);
             });
             if (scheduleSubscription) this.realtimeSubscriptions.push(scheduleSubscription);
 
-            // 대리점 테이블 구독
-            const agenciesSubscription = await this.supabaseStorage.subscribeToTable('agencies', (payload) => {
-                this.handleRealtimeUpdate('agencies', payload);
-            });
-            if (agenciesSubscription) this.realtimeSubscriptions.push(agenciesSubscription);
-
-            // 코스 테이블 구독
-            const coursesSubscription = await this.supabaseStorage.subscribeToTable('courses', (payload) => {
-                this.handleRealtimeUpdate('courses', payload);
-            });
-            if (coursesSubscription) this.realtimeSubscriptions.push(coursesSubscription);
-
-            // 기사 테이블 구독
-            const driversSubscription = await this.supabaseStorage.subscribeToTable('drivers', (payload) => {
-                this.handleRealtimeUpdate('drivers', payload);
-            });
-            if (driversSubscription) this.realtimeSubscriptions.push(driversSubscription);
-
-            // 차계부 테이블 구독
+            // 차계부 테이블 구독 (실시간 동기화 필요)
             const vehicleLogsSubscription = await this.supabaseStorage.subscribeToTable('vehicle_logs', (payload) => {
                 this.handleRealtimeUpdate('vehicle_logs', payload);
             });
             if (vehicleLogsSubscription) this.realtimeSubscriptions.push(vehicleLogsSubscription);
 
-            console.log('✅ 실시간 동기화 구독 설정 완료');
+            // 기본 데이터는 주기적 동기화로 처리 (실시간 구독 제거)
+            // 대리점, 코스, 기사는 앱 초기화 및 주기적 동기화로 충분
+
+            console.log('✅ 실시간 동기화 구독 설정 완료 (스케줄, 차계부)');
         } catch (error) {
             console.error('실시간 동기화 설정 실패:', error);
         }
@@ -1223,11 +1205,7 @@ export const App = {
                             console.log('✅ 스케줄 실시간 동기화 완료 (새로운 버전 적용):', date);
                         } else if (newLastModified < localLastModified) {
                             console.log('⚠️ 스케줄 실시간 동기화 충돌 (로컬 버전 유지):', date);
-                            // 로컬 버전이 더 최신이므로 Supabase에 업데이트를 푸시할 수도 있지만,
-                            // 실시간 업데이트는 주로 원격 변경 사항을 반영하는 데 중점을 둡니다.
-                            // 여기서는 로컬 버전을 유지하고 아무것도 하지 않습니다.
                         } else if (newLastModified === 0 && localLastModified === 0 && newScheduleData.stops && newScheduleData.stops.length > 0) {
-                            // 둘 다 타임스탬프가 없지만, 원격에 데이터가 있으면 적용 (하위 호환성)
                             this.services.storage.saveSchedule(date, newScheduleData);
                             if (this.state.selectedDate === date) {
                                 this.loadScheduleForDate(date);
@@ -1235,35 +1213,6 @@ export const App = {
                             }
                             console.log('✅ 스케줄 실시간 동기화 완료:', date);
                         }
-                    }
-                    break;
-                case 'agencies':
-                    const agencies = await supabaseStorage.loadAgencies();
-                    if (agencies && agencies.length > 0) {
-                        this.services.storage.saveAgencies(agencies);
-                        this.state.agencies = agencies;
-                        this.buildCache();
-                        this.render();
-                        console.log('✅ 대리점 실시간 동기화 완료');
-                    }
-                    break;
-                case 'courses':
-                    const courses = await supabaseStorage.loadCourses();
-                    if (courses && courses.length > 0) {
-                        this.services.storage.saveCourses(courses);
-                        this.state.courses = courses;
-                        this.buildCache();
-                        this.render();
-                        console.log('✅ 코스 실시간 동기화 완료');
-                    }
-                    break;
-                case 'drivers':
-                    const drivers = await supabaseStorage.loadDrivers();
-                    if (drivers && drivers.length > 0) {
-                        this.services.storage.saveDrivers(drivers);
-                        this.state.drivers = drivers;
-                        this.render();
-                        console.log('✅ 기사 실시간 동기화 완료');
                     }
                     break;
                 case 'vehicle_logs':
@@ -1721,6 +1670,25 @@ export const App = {
         }
 
         return merged;
+    },
+
+    // 기본 데이터 주기적 동기화 시작
+    startPeriodicSync() {
+        // 5분마다 기본 데이터 동기화
+        this.periodicSyncInterval = setInterval(async () => {
+            if (this.state.isOnline && this.state.isSupabaseEnabled) {
+                console.log('🔄 기본 데이터 주기적 동기화 시작...');
+                await this.syncBasicData(this.services.supabaseStorage);
+            }
+        }, 5 * 60 * 1000); // 5분
+    },
+
+    // 주기적 동기화 중지
+    stopPeriodicSync() {
+        if (this.periodicSyncInterval) {
+            clearInterval(this.periodicSyncInterval);
+            this.periodicSyncInterval = null;
+        }
     }
 };
 
