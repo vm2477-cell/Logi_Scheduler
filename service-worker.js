@@ -9,7 +9,6 @@ const FILES_TO_CACHE = [
     './index.html',
     './release-notes.json',
     './manifest.json',
-    './favicon.ico',
     './js/app.js',
     './js/state.js',
     './js/supabase.js',
@@ -53,18 +52,43 @@ const FILES_TO_CACHE = [
 // 서비스 워커 설치 이벤트
 self.addEventListener('install', (event) => {
     console.log(`[Service Worker] v${CACHE_VERSION} 설치 중...`);
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => {
-            console.log('[Service Worker] 필수 파일 캐싱 중...');
-            // addAll()은 목록의 파일 중 하나라도 없으면 전체 캐싱이 실패합니다.
-            // 오류를 확인하기 위해 .catch()를 추가합니다.
-            return cache.addAll(FILES_TO_CACHE).catch(error => {
-                console.error('[Service Worker] 캐싱 실패! 파일 목록에 존재하지 않는 파일이 있는지 확인하세요:', error);
-                // 중요: 설치 실패를 브라우저에 알리기 위해 에러를 다시 던집니다.
-                throw error;
-            });
-        })
-    );
+
+    // 안전한 캐싱: cache.addAll 대신 개별 fetch + cache.put 로 파일을 하나씩 시도하여
+    // 일부 파일이 404/네트워크 오류여도 설치가 실패하지 않도록 합니다.
+    event.waitUntil((async () => {
+        const cache = await caches.open(CACHE_NAME);
+        console.log('[Service Worker] 필수 파일 안전하게 캐싱 시도...');
+
+        for (const url of FILES_TO_CACHE) {
+            try {
+                // 상대경로를 절대 URL로 변환
+                const absoluteUrl = new URL(url, self.location.href).href;
+                const isCrossOrigin = new URL(absoluteUrl).origin !== self.location.origin;
+
+                const fetchOptions = isCrossOrigin ? { mode: 'no-cors' } : { cache: 'no-cache', credentials: 'same-origin' };
+
+                const response = await fetch(absoluteUrl, fetchOptions);
+
+                // 교차 출처(no-cors) 요청은 opaque 응답이 올 수 있으므로 상태 검사를 건너뜁니다.
+                if (!response) throw new Error('No response');
+                if (!isCrossOrigin && !response.ok) throw new Error(`Status ${response.status}`);
+
+                // 캐시에 저장
+                try {
+                    await cache.put(absoluteUrl, response.clone());
+                    console.log('[Service Worker] 캐싱 성공:', absoluteUrl);
+                } catch (putErr) {
+                    console.warn('[Service Worker] 캐시에 저장 실패:', absoluteUrl, putErr);
+                }
+            } catch (err) {
+                // 개별 파일 실패는 설치 실패로 처리하지 않고 건너뜁니다.
+                console.warn('[Service Worker] 파일 캐싱 실패(건너뜀):', url, err);
+            }
+        }
+
+        // 설치 완료로 처리
+        return;
+    })());
 });
 
 // 서비스 워커 활성화 이벤트
