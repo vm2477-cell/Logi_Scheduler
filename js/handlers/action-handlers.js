@@ -5,7 +5,7 @@
 import { DEFAULT_MAINTENANCE_CATEGORIES } from '../state.js';
 import * as Supabase from '../supabase.js';
 import { App } from '../app.js';
-import { showNotification as _showNotification, AgencySelector, TimePicker } from '../components/index.js';
+import { showNotification as _showNotification, AgencySelector, TimePicker, SystemTab } from '../components/index.js';
 import { versionManager } from '../utils/version-manager.js';
 
 const showNotification = (message, type = 'info', duration = 10000) => {
